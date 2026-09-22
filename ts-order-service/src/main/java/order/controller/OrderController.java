@@ -42,7 +42,7 @@ public class OrderController {
     @PostMapping(path = "/order")
     public HttpEntity createNewOrder(@RequestBody Order createOrder, @RequestHeader HttpHeaders headers) {
         OrderController.LOGGER.info("[Create Order] Create Order form {} ---> {} at {}", createOrder.getFrom(), createOrder.getTo(), createOrder.getTravelDate());
-        OrderController.LOGGER.info("[Verify Login] Success");
+        OrderController.LOGGER.info("[Verify Login] Success for create-order");
         return ok(orderService.create(createOrder, headers));
     }
 
