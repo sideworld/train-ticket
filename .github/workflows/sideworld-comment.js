@@ -76,11 +76,15 @@ function render(r) {
     // The restore phase is mostly a file copy, and saying so is the difference between a useful
     // number and a misleading one.
     if (p === "restore" && r.restore_detail?.serving_s) {
-      const copy = r.phases[p] - r.restore_detail.serving_s;
-      out.push(
-        `| &nbsp;&nbsp;↳ snapshot load → first 200 | ${secs(r.restore_detail.serving_s)} |`
-      );
-      out.push(`| &nbsp;&nbsp;↳ root-disk copy and setup | ${secs(copy)} |`);
+      const d = r.restore_detail;
+      out.push(`| &nbsp;&nbsp;↳ snapshot load → first 200 | ${secs(d.serving_s)} |`);
+      if (d.disks_s !== null && d.disks_s !== undefined) {
+        const label = d.rootfs_mode === "zvol" ? "data + root disk, cloned" : "root-disk copy";
+        out.push(`| &nbsp;&nbsp;↳ ${label} | ${secs(d.disks_s)} |`);
+        if (d.netns_s != null) out.push(`| &nbsp;&nbsp;↳ network namespace | ${secs(d.netns_s)} |`);
+      } else {
+        out.push(`| &nbsp;&nbsp;↳ root-disk copy and setup | ${secs(r.phases[p] - d.serving_s)} |`);
+      }
     }
   }
   out.push(`| **total** | **${secs(r.total_s)}** |`);
