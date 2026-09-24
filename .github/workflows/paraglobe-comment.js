@@ -1,8 +1,8 @@
-// Render a Sideworld CI result (the single JSON object ops/ci-entry.sh prints) as the pull
-// request comment. Required by .github/workflows/sideworld.yml through actions/github-script,
+// Render a Paraglobe CI result (the single JSON object ops/ci-entry.sh prints) as the pull
+// request comment. Required by .github/workflows/paraglobe.yml through actions/github-script,
 // and runnable on its own so the exact text can be reproduced outside a workflow:
 //
-//     node sideworld-comment.js result.json
+//     node paraglobe-comment.js result.json
 //
 // Pure: no network, no Octokit, no environment. The workflow does the posting.
 //
@@ -20,7 +20,7 @@
 // pass but "not judged". Whether 🟡 fails the check is per world (thresholds.contention_fails,
 // default: pass, shown as a warning); the safe form is held to the same three states.
 
-const MARKER = (world) => `<!-- sideworld-ci:${world} -->`;
+const MARKER = (world) => `<!-- paraglobe-ci:${world} -->`;
 
 const secs = (v) => {
   if (v === null || v === undefined) return "—";
@@ -263,7 +263,7 @@ function footer(r) {
     `run ${code(r.run_id || "?")}`,
     r.box ? `on ${code(r.box)}` : null,
   ].filter(Boolean);
-  return `<sub>Sideworld: ${bits.join(" · ")}</sub>`;
+  return `<sub>Paraglobe: ${bits.join(" · ")}</sub>`;
 }
 
 // ---------------------------------------------------------------- the comment
@@ -279,7 +279,7 @@ function renderInconclusive(r) {
   const world = r.world || "?";
   const kind = r.error_kind || "box";
   const what = { connection: "the connection to the box dropped", box: "the box could not carry out the run", parse: "the box's result could not be parsed" }[kind] || kind;
-  out.push(`**Sideworld · ${code(world)} · ⚠️ run did not complete: ${kind}** · ${r.run_id ? `run ${code(r.run_id)}` : `no run id — ${what}`}`);
+  out.push(`**Paraglobe · ${code(world)} · ⚠️ run did not complete: ${kind}** · ${r.run_id ? `run ${code(r.run_id)}` : `no run id — ${what}`}`);
   out.push("");
   out.push(`No verdict for ${code(r.head_sha ? r.head_sha.slice(0, 12) : "?")}; nothing is claimed about this pull request. ${r.error ? `The box said: ${code(String(r.error).slice(0, 200))}` : what + "."}`);
   out.push("");
@@ -299,7 +299,7 @@ function render(r) {
   const st = mc ? (mc.replayed && mc.naive ? mcState(mc.verdict) : { emoji: "⚠️", state: "not_run", phrase: "migration not replayed" }) : null;
 
   // ---- the headline, one line
-  const seg = [`**Sideworld · ${code(world)}`];
+  const seg = [`**Paraglobe · ${code(world)}`];
   if (st) seg.push(`${st.emoji} ${st.phrase}`);
   seg.push(`tests: ${testsSegment(r)}`);
   seg.push(`${secs(r.total_s)}${r.queued ? " (queued)" : ""}**`);

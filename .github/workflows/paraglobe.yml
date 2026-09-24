@@ -1,7 +1,7 @@
-# Sideworld — every pull request gets its own fork of the running system, at production scale.
+# Paraglobe — every pull request gets its own fork of the running system, at production scale.
 #
-# Copy this file to .github/workflows/sideworld.yml in the repository it tests, and set the
-# `world` input below to the Sideworld world that repository corresponds to.
+# Copy this file to .github/workflows/paraglobe.yml in the repository it tests, and set the
+# `world` input below to the Paraglobe world that repository corresponds to.
 #
 # The runner does no heavy work and needs no Docker: it checks the pull request out, asks the
 # API which paths changed, pipes the tree into one SSH command, and renders the JSON that comes
@@ -12,16 +12,16 @@
 # is no deploy key, no fetch and no repository access to grant.
 #
 # Repository settings this expects (ops/ci-user.sh prints all three):
-#   secret  SIDEWORLD_CI_KEY        the private key whose public half is pinned to the forced
+#   secret  PARAGLOBE_CI_KEY        the private key whose public half is pinned to the forced
 #                                   command in ci's authorized_keys on the box
-#   var     SIDEWORLD_BOX_HOST      the box's address
-#   var     SIDEWORLD_KNOWN_HOSTS   the box's host key, so the runner is not told to trust blindly
+#   var     PARAGLOBE_BOX_HOST      the box's address
+#   var     PARAGLOBE_KNOWN_HOSTS   the box's host key, so the runner is not told to trust blindly
 #
 # `pull_request` deliberately, not `pull_request_target`: a pull request opened from a fork of
 # this repository gets no secrets, so it cannot reach the box at all. That is the intended
 # behaviour — the run builds and executes the pull request's own code — and it is why there is
 # no fallback that would give a fork's code the key.
-name: Sideworld
+name: Paraglobe
 
 on:
   pull_request:
@@ -30,7 +30,7 @@ on:
 # One run per pull request; a new push supersedes the one in flight. The box enforces its own
 # one-run-at-a-time rule per world on top of this, and a run that has to wait reports it.
 concurrency:
-  group: sideworld-${{ github.workflow }}-${{ github.event.pull_request.number }}
+  group: paraglobe-${{ github.workflow }}-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 permissions:
@@ -38,10 +38,10 @@ permissions:
   pull-requests: write
 
 env:
-  SIDEWORLD_WORLD: trainticket
-  SIDEWORLD_SUITE: api
+  PARAGLOBE_WORLD: trainticket
+  PARAGLOBE_SUITE: api
   # Paths the box does not need for this world's build (tar --exclude arguments); none here.
-  SIDEWORLD_TAR_EXCLUDE: ""
+  PARAGLOBE_TAR_EXCLUDE: ""
 
 jobs:
   fork:
@@ -58,7 +58,7 @@ jobs:
 
       # The renderer must NOT come from the pull request's own tree. Two reasons, and the first
       # one bit immediately: a branch cut before this workflow existed has no
-      # .github/workflows/sideworld-comment.js in its head, so `require` failed with
+      # .github/workflows/paraglobe-comment.js in its head, so `require` failed with
       # MODULE_NOT_FOUND and a run that had already produced a verdict lost it. The second is the
       # one that matters more — this step runs with `pull-requests: write`, so requiring a file
       # the pull request can edit would let a pull request run its own code with that permission.
@@ -71,7 +71,7 @@ jobs:
           persist-credentials: false
           sparse-checkout: .github/workflows
           sparse-checkout-cone-mode: false
-          path: .sideworld-base
+          path: .paraglobe-base
 
       - name: Collect the changed paths
         uses: actions/github-script@v7
@@ -84,24 +84,24 @@ jobs:
               pull_number: context.payload.pull_request.number,
               per_page: 100,
             });
-            fs.mkdirSync('.sideworld', { recursive: true });
-            fs.writeFileSync('.sideworld/changed-files', files.map(f => f.filename).join('\n') + '\n');
-            fs.writeFileSync('.sideworld/head-sha', context.payload.pull_request.head.sha + '\n');
+            fs.mkdirSync('.paraglobe', { recursive: true });
+            fs.writeFileSync('.paraglobe/changed-files', files.map(f => f.filename).join('\n') + '\n');
+            fs.writeFileSync('.paraglobe/head-sha', context.payload.pull_request.head.sha + '\n');
             core.info(`${files.length} changed path(s)`);
 
-      - name: Run the suite in a Sideworld fork
-        id: sideworld
+      - name: Run the suite in a Paraglobe fork
+        id: paraglobe
         env:
-          BOX_HOST: ${{ vars.SIDEWORLD_BOX_HOST }}
-          KNOWN_HOSTS: ${{ vars.SIDEWORLD_KNOWN_HOSTS }}
-          CI_KEY: ${{ secrets.SIDEWORLD_CI_KEY }}
+          BOX_HOST: ${{ vars.PARAGLOBE_BOX_HOST }}
+          KNOWN_HOSTS: ${{ vars.PARAGLOBE_KNOWN_HOSTS }}
+          CI_KEY: ${{ secrets.PARAGLOBE_CI_KEY }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          test -n "$BOX_HOST" || { echo "vars.SIDEWORLD_BOX_HOST is not set"; exit 1; }
-          test -n "$CI_KEY"   || { echo "secrets.SIDEWORLD_CI_KEY is not set (a pull request from a fork gets no secrets)"; exit 1; }
-          key="$RUNNER_TEMP/sideworld_ci"; umask 077
+          test -n "$BOX_HOST" || { echo "vars.PARAGLOBE_BOX_HOST is not set"; exit 1; }
+          test -n "$CI_KEY"   || { echo "secrets.PARAGLOBE_CI_KEY is not set (a pull request from a fork gets no secrets)"; exit 1; }
+          key="$RUNNER_TEMP/paraglobe_ci"; umask 077
           printf '%s\n' "$CI_KEY" > "$key"
           printf '%s\n' "$KNOWN_HOSTS" > "$RUNNER_TEMP/known_hosts"
           # Nothing here is interpolated into the shell by Actions: PR_NUMBER and HEAD_SHA come
@@ -110,35 +110,35 @@ jobs:
           # the path from the runner drops an idle connection at about 4.5 min ("client_loop: send
           # disconnect: Broken pipe", sideworld/mattermost #2). Keepalives every 30 s hold it open.
           # --exclude the base checkout: the box must receive the pull request's tree and nothing else.
-          # SIDEWORLD_TAR_EXCLUDE is a list of --exclude arguments, unquoted on purpose.
+          # PARAGLOBE_TAR_EXCLUDE is a list of --exclude arguments, unquoted on purpose.
           # The box's stderr is shown live and kept, so an inconclusive run can say which of the
           # connection, the box or the parse failed, with the last lines of what the box said.
           rc=0
           # shellcheck disable=SC2086
-          tar --exclude-vcs --exclude=./.sideworld-base $SIDEWORLD_TAR_EXCLUDE -czf - . \
+          tar --exclude-vcs --exclude=./.paraglobe-base $PARAGLOBE_TAR_EXCLUDE -czf - . \
             | ssh -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes \
                   -o ServerAliveInterval=30 -o ServerAliveCountMax=6 \
                   -o UserKnownHostsFile="$RUNNER_TEMP/known_hosts" \
-                  ci@"$BOX_HOST" "$SIDEWORLD_WORLD $PR_NUMBER $HEAD_SHA $SIDEWORLD_SUITE" \
-            > "$RUNNER_TEMP/sideworld.json" 2> >(tee "$RUNNER_TEMP/sideworld.stderr" >&2) || rc=$?
-          echo "result=$RUNNER_TEMP/sideworld.json" >> "$GITHUB_OUTPUT"
-          echo "stderr=$RUNNER_TEMP/sideworld.stderr" >> "$GITHUB_OUTPUT"
+                  ci@"$BOX_HOST" "$PARAGLOBE_WORLD $PR_NUMBER $HEAD_SHA $PARAGLOBE_SUITE" \
+            > "$RUNNER_TEMP/paraglobe.json" 2> >(tee "$RUNNER_TEMP/paraglobe.stderr" >&2) || rc=$?
+          echo "result=$RUNNER_TEMP/paraglobe.json" >> "$GITHUB_OUTPUT"
+          echo "stderr=$RUNNER_TEMP/paraglobe.stderr" >> "$GITHUB_OUTPUT"
           echo "ssh_rc=$rc" >> "$GITHUB_OUTPUT"
           exit "$rc"
         continue-on-error: true
 
-      - name: Post or update the Sideworld comment
+      - name: Post or update the Paraglobe comment
         uses: actions/github-script@v7
         env:
-          RESULT: ${{ steps.sideworld.outputs.result }}
-          STDERR: ${{ steps.sideworld.outputs.stderr }}
-          SSH_RC: ${{ steps.sideworld.outputs.ssh_rc }}
+          RESULT: ${{ steps.paraglobe.outputs.result }}
+          STDERR: ${{ steps.paraglobe.outputs.stderr }}
+          SSH_RC: ${{ steps.paraglobe.outputs.ssh_rc }}
         with:
           script: |
             const fs = require('fs');
             // github-script resolves a relative require against the action, not the workspace, and
             // the renderer comes from the base branch's checkout, never from the pull request's.
-            const { render, MARKER } = require(`${process.env.GITHUB_WORKSPACE}/.sideworld-base/.github/workflows/sideworld-comment.js`);
+            const { render, MARKER } = require(`${process.env.GITHUB_WORKSPACE}/.paraglobe-base/.github/workflows/paraglobe-comment.js`);
 
             // The last lines of the box's stderr, for an inconclusive run's collapsed block.
             let tail = '';
@@ -155,9 +155,9 @@ jobs:
               const rc = Number(process.env.SSH_RC || 0);
               const kind = rc === 255 ? 'connection' : (e.message === 'empty' ? 'box' : 'parse');
               result = {
-                status: 'error', world: process.env.SIDEWORLD_WORLD, red: true,
+                status: 'error', world: process.env.PARAGLOBE_WORLD, red: true,
                 head_sha: context.payload.pull_request.head.sha,
-                error: `the box produced no parseable result (${kind}, ssh exit ${rc}) — see the "Run the suite in a Sideworld fork" step log`,
+                error: `the box produced no parseable result (${kind}, ssh exit ${rc}) — see the "Run the suite in a Paraglobe fork" step log`,
                 error_kind: kind, ssh_rc: rc,
               };
             }
@@ -165,7 +165,7 @@ jobs:
             if (!result.run_id) { const m = tail.match(/==> run (\S+) on/); if (m) result.run_id = m[1]; }
 
             const body = render(result);
-            const marker = MARKER(result.world || process.env.SIDEWORLD_WORLD);
+            const marker = MARKER(result.world || process.env.PARAGLOBE_WORLD);
             const { owner, repo } = context.repo;
             const issue_number = context.payload.pull_request.number;
 
@@ -184,7 +184,7 @@ jobs:
 
             core.summary.addRaw(body).write();
             if (result.status !== 'ok') {
-              core.setFailed(result.error || 'the Sideworld run did not complete');
+              core.setFailed(result.error || 'the Paraglobe run did not complete');
             } else if (result.red) {
               const n = result.compare.new.length;
               core.setFailed(`${n} new failure${n === 1 ? '' : 's'} against the baseline: ${result.compare.new.join(', ')}`);
