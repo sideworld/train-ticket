@@ -29,6 +29,15 @@ const secs = (v) => {
   const whole = Math.round(n);                // "8 m 60 s" was 539.6 rounded after the split
   return `${Math.floor(whole / 60)} m ${whole % 60} s`;
 };
+// Queue time in the headline is coarse on purpose: "waited 8 m in queue", not "8 m 21 s".
+const waited = (v) => { const n = Number(v); return n >= 90 ? `${Math.round(n / 60)} m` : `${Math.round(n)} s`; };
+// The check's own time and the queue wait, from the result (or derived from the phases for results
+// that predate queue_s/check_s). A wait under a second is not a wait.
+const times = (r) => {
+  const q = Number(r.queue_s ?? (r.phases || {}).queue ?? 0);
+  const total = Number(r.total_s ?? 0);
+  return { check: r.check_s ?? (r.total_s == null ? null : total - q), queue: q, queued: q > 1.0 };
+};
 const ms = (v) => (v == null ? "—" : v >= 1000 ? `${(v / 1000).toFixed(1)} s` : `${Number(v).toFixed(1)} ms`);
 const code = (s) => "`" + String(s).replace(/`/g, "") + "`";
 const list = (names, limit = 20) => {
@@ -233,7 +242,14 @@ function timingBlock(r) {
       }
     }
   }
-  rows.push(`| **total** | **${secs(r.total_s)}** |`);
+  const t = times(r);
+  if (t.queued) {
+    rows.push(`| **the check** (everything but the queue) | **${secs(t.check)}** |`);
+    rows.push(`| waited in queue (box capacity, not this pull request) | ${secs(t.queue)} |`);
+    rows.push(`| total, wall-clock | ${secs(r.total_s)} |`);
+  } else {
+    rows.push(`| **total** | **${secs(r.total_s)}** |`);
+  }
   if ((r.build || []).length > 1) {
     rows.push("");
     rows.push("| image | |"); rows.push("|---|--:|");
@@ -302,7 +318,8 @@ function render(r) {
   const seg = [`**Paraglobe · ${code(world)}`];
   if (st) seg.push(`${st.emoji} ${st.phrase}`);
   seg.push(`tests: ${testsSegment(r)}`);
-  seg.push(`${secs(r.total_s)}${r.queued ? " (queued)" : ""}**`);
+  const t = times(r);
+  seg.push(`${secs(t.check)}${t.queued ? ` · waited ${waited(t.queue)} in queue` : ""}**`);
   out.push(seg.join(" · "));
   out.push("");
 
