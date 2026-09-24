@@ -90,7 +90,6 @@ jobs:
             core.info(`${files.length} changed path(s)`);
 
       - name: Run the suite in a Sideworld fork
-        id: run
         id: sideworld
         env:
           BOX_HOST: ${{ vars.SIDEWORLD_BOX_HOST }}
@@ -111,10 +110,11 @@ jobs:
           # the path from the runner drops an idle connection at about 4.5 min ("client_loop: send
           # disconnect: Broken pipe", sideworld/mattermost #2). Keepalives every 30 s hold it open.
           # --exclude the base checkout: the box must receive the pull request's tree and nothing else.
-          # shellcheck disable=SC2086 -- SIDEWORLD_TAR_EXCLUDE is a list of --exclude arguments
+          # SIDEWORLD_TAR_EXCLUDE is a list of --exclude arguments, unquoted on purpose.
           # The box's stderr is shown live and kept, so an inconclusive run can say which of the
           # connection, the box or the parse failed, with the last lines of what the box said.
           rc=0
+          # shellcheck disable=SC2086
           tar --exclude-vcs --exclude=./.sideworld-base $SIDEWORLD_TAR_EXCLUDE -czf - . \
             | ssh -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes \
                   -o ServerAliveInterval=30 -o ServerAliveCountMax=6 \
@@ -130,9 +130,9 @@ jobs:
       - name: Post or update the Sideworld comment
         uses: actions/github-script@v7
         env:
-          RESULT: ${{ steps.run.outputs.result }}
-          STDERR: ${{ steps.run.outputs.stderr }}
-          SSH_RC: ${{ steps.run.outputs.ssh_rc }}
+          RESULT: ${{ steps.sideworld.outputs.result }}
+          STDERR: ${{ steps.sideworld.outputs.stderr }}
+          SSH_RC: ${{ steps.sideworld.outputs.ssh_rc }}
         with:
           script: |
             const fs = require('fs');
