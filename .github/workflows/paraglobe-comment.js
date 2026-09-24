@@ -218,6 +218,7 @@ function testsBlock(r) {
     rows.push(`- ➖ unchanged (${(c.unchanged || []).length}), already failing on the baseline: ${list(c.unchanged, 6)}`);
     rows.push(`- ✅ passed here but fails on the baseline (${(c.fixed || []).length}): ${list(c.fixed)}` + ((c.fixed || []).length ? " — worth a look, but this set moves on its own at this scale; only `new` is a verdict" : ""));
   }
+  if (c.new_not_retried?.length) rows.push(`- ⏭️ not re-run by the retry (${c.new_not_retried.length}): ${list(c.new_not_retried)} — counted as new: a candidate is cleared only by passing on its own`);
   if (c.new_cleared_on_retry?.length) rows.push(`- 🔁 cleared on retry (${c.new_cleared_on_retry.length}): ${list(c.new_cleared_on_retry)} — failed in the sharded run, passed when run alone, so not counted as new`);
   return rows;
 }

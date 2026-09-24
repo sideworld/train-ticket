@@ -142,7 +142,12 @@ jobs:
 
             // The last lines of the box's stderr, for an inconclusive run's collapsed block.
             let tail = '';
-            try { tail = fs.readFileSync(process.env.STDERR, 'utf8').split('\n').filter(Boolean).slice(-20).join('\n'); } catch (e) { /* none kept */ }
+            // ci_log colours its prefix (ESC[1;34m==>ESC[0m), so the raw bytes never matched /==> run/ and an
+            // inconclusive comment lost its run id (PAR-51); strip the codes before reading or showing the tail
+            // The run id is the FIRST line of stderr, so it is looked for in the whole log, not in the 20-line tail.
+            let stderrAll = '';
+            try { stderrAll = fs.readFileSync(process.env.STDERR, 'utf8').replace(/\x1b\[[0-9;]*m/g, ''); } catch (e) { /* none kept */ }
+            tail = stderrAll.split('\n').filter(Boolean).slice(-20).join('\n');
             let result;
             try {
               const raw = fs.readFileSync(process.env.RESULT, 'utf8');
@@ -162,7 +167,7 @@ jobs:
               };
             }
             result.stderr_tail = tail;
-            if (!result.run_id) { const m = tail.match(/==> run (\S+) on/); if (m) result.run_id = m[1]; }
+            if (!result.run_id) { const m = stderrAll.match(/==> run (\S+) on/); if (m) result.run_id = m[1]; }
 
             const body = render(result);
             const marker = MARKER(result.world || process.env.PARAGLOBE_WORLD);
@@ -186,8 +191,14 @@ jobs:
             if (result.status !== 'ok') {
               core.setFailed(result.error || 'the Paraglobe run did not complete');
             } else if (result.red) {
-              const n = result.compare.new.length;
-              core.setFailed(`${n} new failure${n === 1 ? '' : 's'} against the baseline: ${result.compare.new.join(', ')}`);
+              // Name what made it red. A run can be red on the Migration Check alone, and this used to
+              // read "0 new failures against the baseline:" then (PAR-51).
+              const why = [];
+              const v = result.migration_check && result.migration_check.verdict;
+              if (v && v.red) why.push(`migration check: ${v.phrase || (v.reasons || [])[0] || 'fails its thresholds'}`);
+              const nw = (result.compare && result.compare.new) || [];
+              if (nw.length) why.push(`${nw.length} new failure${nw.length === 1 ? '' : 's'} against the baseline: ${nw.join(', ')}`);
+              core.setFailed(why.join('; ') || 'red, and the result does not say why: see the comment');
             } else {
               core.info('no new failures against the baseline');
             }
