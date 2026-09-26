@@ -274,8 +274,9 @@ function timingBlock(r) {
 function footer(r) {
   const b = r.baseline || {};
   const bits = [
+    // the baseline's name, never its ZFS dataset: pool and dataset names are the box's
+    // internals, and these comments are public
     `forked from baseline ${code(b.name || "?")}`,
-    b.zfs_snapshot ? `(${code(b.zfs_snapshot)})` : null,
     b.taken_at ? `taken ${b.taken_at}` : null,
     `run ${code(r.run_id || "?")}`,
     r.box ? `on ${code(r.box)}` : null,
