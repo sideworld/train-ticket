@@ -1,38 +1,27 @@
-# Paraglobe — every pull request gets its own fork of the running system, at production scale.
+# Paraglobe: runs each pull request in Paraglobe and posts the result as one comment.
 #
-# Copy this file to .github/workflows/paraglobe.yml in the repository it tests, and set the
-# `world` input below to the Paraglobe world that repository corresponds to.
+# Copy this file to .github/workflows/paraglobe.yml in the repository it tests and set the two
+# lines under `env:`. That is the whole integration: no other file goes with it.
 #
-# The runner does no heavy work and needs no Docker: it checks the pull request out, asks the
-# API which paths changed, pipes the tree into one SSH command, and renders the JSON that comes
-# back. Everything else — building the changed images, restoring a fork of the baseline snapshot,
-# swapping the images in, running migrations forward and running the suite — happens on the box.
+# This workflow only transports. It sends the pull request's tree to Paraglobe over SSH and posts
+# the comment Paraglobe sends back, verbatim, with the check's outcome. It judges nothing and
+# contains nothing of how Paraglobe works: the comment arrives finished.
 #
-# The box needs no GitHub credentials: the checkout arrives on the SSH command's stdin, so there
-# is no deploy key, no fetch and no repository access to grant.
+# Repository secrets (secrets, never variables: Actions prints variables in its logs, and the logs
+# of a public repository are readable by anyone signed in to GitHub):
+#   PARAGLOBE_CI_KEY        the key this repository uses to reach Paraglobe
+#   PARAGLOBE_BOX_HOST      Paraglobe's address
+#   PARAGLOBE_KNOWN_HOSTS   Paraglobe's SSH host key
 #
-# Repository settings this expects (ops/ci-user.sh prints all three):
-#   secret  PARAGLOBE_CI_KEY        the private key whose public half is pinned to the forced
-#                                   command in ci's authorized_keys on the box
-#   secret  PARAGLOBE_BOX_HOST      the box's address
-#   secret  PARAGLOBE_KNOWN_HOSTS   the box's host key, so the runner is not told to trust blindly
-#
-# All three are secrets, never variables: Actions prints a step's env block, and a variable
-# substituted into a script, in the log before anything can mask it, and the logs of a public
-# repository are readable by any signed-in GitHub user. A secret is masked from the start.
-#
-# `pull_request` deliberately, not `pull_request_target`: a pull request opened from a fork of
-# this repository gets no secrets, so it cannot reach the box at all. That is the intended
-# behaviour — the run builds and executes the pull request's own code — and it is why there is
-# no fallback that would give a fork's code the key.
+# `pull_request` deliberately, not `pull_request_target`: a pull request opened from a fork of this
+# repository gets no secrets, so it cannot reach Paraglobe at all.
 name: Paraglobe
 
 on:
   pull_request:
     types: [opened, synchronize, reopened]
 
-# One run per pull request; a new push supersedes the one in flight. The box enforces its own
-# one-run-at-a-time rule per world on top of this, and a run that has to wait reports it.
+# One run per pull request; a new push supersedes the one in flight.
 concurrency:
   group: paraglobe-${{ github.workflow }}-${{ github.event.pull_request.number }}
   cancel-in-progress: true
@@ -44,12 +33,12 @@ permissions:
 env:
   PARAGLOBE_WORLD: trainticket
   PARAGLOBE_SUITE: api
-  # Paths the box does not need for this world's build (tar --exclude arguments); none here.
+  # Paths the run does not need (tar --exclude arguments); none here.
   PARAGLOBE_TAR_EXCLUDE: ""
 
 jobs:
-  fork:
-    name: fork and test
+  paraglobe:
+    name: Paraglobe
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -60,24 +49,7 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      # The renderer must NOT come from the pull request's own tree. Two reasons, and the first
-      # one bit immediately: a branch cut before this workflow existed has no
-      # .github/workflows/paraglobe-comment.js in its head, so `require` failed with
-      # MODULE_NOT_FOUND and a run that had already produced a verdict lost it. The second is the
-      # one that matters more — this step runs with `pull-requests: write`, so requiring a file
-      # the pull request can edit would let a pull request run its own code with that permission.
-      # Take it from the base branch instead, which only a merge can change.
-      - name: Check out the base branch's workflow scripts
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.base.ref }}
-          fetch-depth: 1
-          persist-credentials: false
-          sparse-checkout: .github/workflows
-          sparse-checkout-cone-mode: false
-          path: .paraglobe-base
-
-      - name: Collect the changed paths
+      - name: List the changed paths
         uses: actions/github-script@v7
         with:
           script: |
@@ -93,8 +65,8 @@ jobs:
             fs.writeFileSync('.paraglobe/head-sha', context.payload.pull_request.head.sha + '\n');
             core.info(`${files.length} changed path(s)`);
 
-      - name: Run the suite in a Paraglobe fork
-        id: paraglobe
+      - name: Send the pull request to Paraglobe
+        id: send
         env:
           BOX_HOST: ${{ secrets.PARAGLOBE_BOX_HOST }}
           KNOWN_HOSTS: ${{ secrets.PARAGLOBE_KNOWN_HOSTS }}
@@ -103,110 +75,71 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          # Secrets are masked already; the address is masked again in case it reaches a log some
-          # other way (an ssh error names the host). The host key is written to a file, never echoed.
+          # Secrets are masked already; the address is masked again in case an ssh error names it.
+          # The host key is written to a file and never echoed.
           echo "::add-mask::$BOX_HOST"
           test -n "$BOX_HOST"    || { echo "secrets.PARAGLOBE_BOX_HOST is not set"; exit 1; }
           test -n "$KNOWN_HOSTS" || { echo "secrets.PARAGLOBE_KNOWN_HOSTS is not set"; exit 1; }
-          test -n "$CI_KEY"   || { echo "secrets.PARAGLOBE_CI_KEY is not set (a pull request from a fork gets no secrets)"; exit 1; }
+          test -n "$CI_KEY"      || { echo "secrets.PARAGLOBE_CI_KEY is not set (a pull request from a fork gets no secrets)"; exit 1; }
           key="$RUNNER_TEMP/paraglobe_ci"; umask 077
           printf '%s\n' "$CI_KEY" > "$key"
           printf '%s\n' "$KNOWN_HOSTS" > "$RUNNER_TEMP/known_hosts"
-          # Nothing here is interpolated into the shell by Actions: PR_NUMBER and HEAD_SHA come
-          # through the environment, and the box validates both against fixed patterns anyway.
-          # ServerAliveInterval: a run queued behind another one on the box is silent for minutes, and
-          # the path from the runner drops an idle connection at about 4.5 min ("client_loop: send
-          # disconnect: Broken pipe", sideworld/mattermost #2). Keepalives every 30 s hold it open.
-          # --exclude the base checkout: the box must receive the pull request's tree and nothing else.
-          # PARAGLOBE_TAR_EXCLUDE is a list of --exclude arguments, unquoted on purpose.
-          # The box's stderr is shown live and kept, so an inconclusive run can say which of the
-          # connection, the box or the parse failed, with the last lines of what the box said.
+          # PR_NUMBER and HEAD_SHA reach the shell through the environment, never interpolated.
+          # Keepalives hold the connection open while the run waits its turn. Paraglobe's own
+          # progress output is kept out of this public log (it goes to a file only it reads back).
           rc=0
-          # shellcheck disable=SC2086
-          tar --exclude-vcs --exclude=./.paraglobe-base $PARAGLOBE_TAR_EXCLUDE -czf - . \
-            | ssh -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes \
+          # shellcheck disable=SC2086  # PARAGLOBE_TAR_EXCLUDE is a list of --exclude arguments
+          tar --exclude-vcs $PARAGLOBE_TAR_EXCLUDE -czf - . \
+            | ssh -i "$key" -o IdentitiesOnly=yes -o BatchMode=yes -o LogLevel=ERROR \
                   -o ServerAliveInterval=30 -o ServerAliveCountMax=6 \
                   -o UserKnownHostsFile="$RUNNER_TEMP/known_hosts" \
                   ci@"$BOX_HOST" "$PARAGLOBE_WORLD $PR_NUMBER $HEAD_SHA $PARAGLOBE_SUITE" \
-            > "$RUNNER_TEMP/paraglobe.json" 2> >(tee "$RUNNER_TEMP/paraglobe.stderr" >&2) || rc=$?
-          echo "result=$RUNNER_TEMP/paraglobe.json" >> "$GITHUB_OUTPUT"
+            > "$RUNNER_TEMP/paraglobe.json" 2> "$RUNNER_TEMP/paraglobe.stderr" || rc=$?
+          echo "reply=$RUNNER_TEMP/paraglobe.json" >> "$GITHUB_OUTPUT"
           echo "stderr=$RUNNER_TEMP/paraglobe.stderr" >> "$GITHUB_OUTPUT"
           echo "ssh_rc=$rc" >> "$GITHUB_OUTPUT"
           exit "$rc"
         continue-on-error: true
 
-      - name: Post or update the Paraglobe comment
+      # Posts what Paraglobe sent back: {marker, body, conclusion, failure}. When nothing usable
+      # came back, it says so -- the connection, Paraglobe, or the reply -- and the check fails.
+      - name: Post the comment
         uses: actions/github-script@v7
         env:
-          RESULT: ${{ steps.paraglobe.outputs.result }}
-          STDERR: ${{ steps.paraglobe.outputs.stderr }}
-          SSH_RC: ${{ steps.paraglobe.outputs.ssh_rc }}
+          REPLY: ${{ steps.send.outputs.reply }}
+          STDERR: ${{ steps.send.outputs.stderr }}
+          SSH_RC: ${{ steps.send.outputs.ssh_rc }}
         with:
           script: |
             const fs = require('fs');
-            // github-script resolves a relative require against the action, not the workspace, and
-            // the renderer comes from the base branch's checkout, never from the pull request's.
-            const { render, MARKER } = require(`${process.env.GITHUB_WORKSPACE}/.paraglobe-base/.github/workflows/paraglobe-comment.js`);
-
-            // The last lines of the box's stderr, for an inconclusive run's collapsed block.
-            let tail = '';
-            // ci_log colours its prefix (ESC[1;34m==>ESC[0m), so the raw bytes never matched /==> run/ and an
-            // inconclusive comment lost its run id (PAR-51); strip the codes before reading or showing the tail
-            // The run id is the FIRST line of stderr, so it is looked for in the whole log, not in the 20-line tail.
-            let stderrAll = '';
-            try { stderrAll = fs.readFileSync(process.env.STDERR, 'utf8').replace(/\x1b\[[0-9;]*m/g, ''); } catch (e) { /* none kept */ }
-            tail = stderrAll.split('\n').filter(Boolean).slice(-20).join('\n');
-            let result;
+            const world = process.env.PARAGLOBE_WORLD;
+            let reply = null, kind = null;
             try {
-              const raw = fs.readFileSync(process.env.RESULT, 'utf8');
+              const raw = fs.readFileSync(process.env.REPLY, 'utf8');
               if (!raw.trim()) throw new Error('empty');
-              result = JSON.parse(raw);
-              if (result.status !== 'ok') result.error_kind = result.error_kind || 'box';
+              reply = JSON.parse(raw);
+              if (reply.schema !== 'paraglobe.comment/1' || typeof reply.body !== 'string') { reply = null; kind = 'reply'; }
             } catch (e) {
-              // Which failed: the connection (ssh exit 255, nothing or a truncated stream came back),
-              // the box (it printed nothing parseable and exited otherwise), or the parse itself.
-              const rc = Number(process.env.SSH_RC || 0);
-              const kind = rc === 255 ? 'connection' : (e.message === 'empty' ? 'box' : 'parse');
-              result = {
-                status: 'error', world: process.env.PARAGLOBE_WORLD, red: true,
-                head_sha: context.payload.pull_request.head.sha,
-                error: `the box produced no parseable result (${kind}, ssh exit ${rc}) — see the "Run the suite in a Paraglobe fork" step log`,
-                error_kind: kind, ssh_rc: rc,
-              };
+              kind = Number(process.env.SSH_RC || 0) === 255 ? 'connection' : (e.message === 'empty' ? 'Paraglobe' : 'reply');
             }
-            result.stderr_tail = tail;
-            if (!result.run_id) { const m = stderrAll.match(/==> run (\S+) on/); if (m) result.run_id = m[1]; }
-
-            const body = render(result);
-            const marker = MARKER(result.world || process.env.PARAGLOBE_WORLD);
+            if (!reply) {
+              // The run id is the first line Paraglobe writes, so a failed run can still be traced.
+              let run = '';
+              try { const m = fs.readFileSync(process.env.STDERR, 'utf8').replace(/\x1b\[[0-9;]*m/g, '').match(/==> run (\S+) on/); if (m) run = m[1]; } catch (e) { /* none */ }
+              const marker = `<!-- paraglobe-ci:${world} -->`;
+              const sha = context.payload.pull_request.head.sha.slice(0, 12);
+              reply = { marker, conclusion: 'failure', failure: `the run did not complete (${kind})`,
+                body: `**Paraglobe · \`${world}\` · ⚠️ run did not complete: ${kind}**${run ? ` · run \`${run}\`` : ''}\n\n` +
+                      `No result for \`${sha}\`; nothing is claimed about this pull request.\n\n${marker}` };
+            }
             const { owner, repo } = context.repo;
             const issue_number = context.payload.pull_request.number;
-
-            // One comment per pull request, updated in place, found by its marker.
-            const comments = await github.paginate(github.rest.issues.listComments, {
-              owner, repo, issue_number, per_page: 100,
-            });
-            const mine = comments.find(c => c.body && c.body.includes(marker));
+            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number, per_page: 100 });
+            const mine = comments.find(c => c.body && c.body.includes(reply.marker));
             if (mine) {
-              await github.rest.issues.updateComment({ owner, repo, comment_id: mine.id, body });
-              core.info(`updated comment ${mine.id}`);
+              await github.rest.issues.updateComment({ owner, repo, comment_id: mine.id, body: reply.body });
             } else {
-              await github.rest.issues.createComment({ owner, repo, issue_number, body });
-              core.info('created the comment');
+              await github.rest.issues.createComment({ owner, repo, issue_number, body: reply.body });
             }
-
-            core.summary.addRaw(body).write();
-            if (result.status !== 'ok') {
-              core.setFailed(result.error || 'the Paraglobe run did not complete');
-            } else if (result.red) {
-              // Name what made it red. A run can be red on the Migration Check alone, and this used to
-              // read "0 new failures against the baseline:" then (PAR-51).
-              const why = [];
-              const v = result.migration_check && result.migration_check.verdict;
-              if (v && v.red) why.push(`migration check: ${v.phrase || (v.reasons || [])[0] || 'fails its thresholds'}`);
-              const nw = (result.compare && result.compare.new) || [];
-              if (nw.length) why.push(`${nw.length} new failure${nw.length === 1 ? '' : 's'} against the baseline: ${nw.join(', ')}`);
-              core.setFailed(why.join('; ') || 'red, and the result does not say why: see the comment');
-            } else {
-              core.info('no new failures against the baseline');
-            }
+            await core.summary.addRaw(reply.body).write();
+            if (reply.conclusion !== 'success') core.setFailed(reply.failure || 'Paraglobe: failed');
