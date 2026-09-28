@@ -9,7 +9,8 @@
 #
 # Repository secrets (secrets, never variables: Actions prints variables in its logs, and the logs
 # of a public repository are readable by anyone signed in to GitHub):
-#   PARAGLOBE_CI_KEY        the key this repository uses to reach Paraglobe
+#   PARAGLOBE_CI_KEY        the key this repository uses to reach Paraglobe (this repository's own;
+#                           Paraglobe accepts it for this repository's world and no other)
 #   PARAGLOBE_BOX_HOST      Paraglobe's address
 #   PARAGLOBE_KNOWN_HOSTS   Paraglobe's SSH host key
 #
@@ -43,14 +44,14 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Check out the pull request head
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 1
           persist-credentials: false
 
       - name: List the changed paths
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b  # v7.1.0
         with:
           script: |
             const fs = require('fs');
@@ -101,14 +102,50 @@ jobs:
           exit "$rc"
         continue-on-error: true
 
+      # The key and the host key are the job's alone: gone before any later step, whatever happened.
+      - name: Remove the key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/paraglobe_ci" "$RUNNER_TEMP/known_hosts"
+
+      # The report page, when Paraglobe sent one with the reply: attached to this workflow run, where
+      # only people who can read this repository can open it, and removed by GitHub after 30 days.
+      - name: Unpack the report
+        id: report
+        env:
+          REPLY: ${{ steps.send.outputs.reply }}
+        run: |
+          python3 - "$REPLY" "$RUNNER_TEMP/paraglobe-report.html" >> "$GITHUB_OUTPUT" <<'PY'
+          import base64, gzip, json, sys
+          try:
+              page = json.load(open(sys.argv[1])).get("report") or ""
+              if page:
+                  open(sys.argv[2], "wb").write(gzip.decompress(base64.b64decode(page)))
+          except Exception:
+              page = ""
+          print("has=" + ("true" if page else "false"))
+          PY
+        continue-on-error: true
+
+      - name: Attach the report
+        id: upload
+        if: steps.report.outputs.has == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          path: ${{ runner.temp }}/paraglobe-report.html
+          archive: false
+          retention-days: 30
+        continue-on-error: true
+
       # Posts what Paraglobe sent back: {marker, body, conclusion, failure}. When nothing usable
       # came back, it says so -- the connection, Paraglobe, or the reply -- and the check fails.
+      # The comment's report line points at the attachment, or is left out when there is none.
       - name: Post the comment
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b  # v7.1.0
         env:
           REPLY: ${{ steps.send.outputs.reply }}
           STDERR: ${{ steps.send.outputs.stderr }}
           SSH_RC: ${{ steps.send.outputs.ssh_rc }}
+          REPORT_URL: ${{ steps.upload.outputs.artifact-url }}
         with:
           script: |
             const fs = require('fs');
@@ -131,6 +168,12 @@ jobs:
               reply = { marker, conclusion: 'failure', failure: `the run did not complete (${kind})`,
                 body: `**Paraglobe · \`${world}\` · ⚠️ run did not complete: ${kind}**${run ? ` · run \`${run}\`` : ''}\n\n` +
                       `No result for \`${sha}\`; nothing is claimed about this pull request.\n\n${marker}` };
+            }
+            const placeholder = 'https://paraglobe.invalid/report';
+            if (reply.body.includes(placeholder)) {
+              const url = process.env.REPORT_URL || '';
+              reply.body = url ? reply.body.split(placeholder).join(url)
+                               : reply.body.split('\n').filter(l => !l.includes(placeholder)).join('\n').replace(/\n{3,}/g, '\n\n');
             }
             const { owner, repo } = context.repo;
             const issue_number = context.payload.pull_request.number;
