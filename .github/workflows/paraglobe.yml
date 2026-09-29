@@ -178,7 +178,10 @@ jobs:
             const { owner, repo } = context.repo;
             const issue_number = context.payload.pull_request.number;
             const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number, per_page: 100 });
-            const mine = comments.find(c => c.body && c.body.includes(reply.marker));
+            // Only a comment this workflow's own identity wrote is updated. Anyone can post a
+            // comment carrying the marker; the first one found used to be edited in place.
+            const mine = comments.find(c => c.user && c.user.type === 'Bot' && c.user.login === 'github-actions[bot]' &&
+                                            c.body && c.body.includes(reply.marker));
             if (mine) {
               await github.rest.issues.updateComment({ owner, repo, comment_id: mine.id, body: reply.body });
             } else {
