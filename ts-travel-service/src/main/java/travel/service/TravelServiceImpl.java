@@ -212,7 +212,7 @@ public class TravelServiceImpl implements TravelService {
     private TripResponse getTickets(Trip trip, Route route, String startingPlaceId, String endPlaceId, String startingPlaceName, String endPlaceName, Date departureTime, HttpHeaders headers) {
 
         //Determine if the date checked is the same day and after
-        if (!afterToday(departureTime)) {
+        if (afterToday(departureTime)) {
             return null;
         }
 
