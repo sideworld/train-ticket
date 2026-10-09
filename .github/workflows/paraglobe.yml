@@ -109,12 +109,14 @@ jobs:
 
       # The report page, when Paraglobe sent one with the reply: attached to this workflow run, where
       # only people who can read this repository can open it, and removed by GitHub after 30 days.
+      # python3 -I: the step runs in the pull request's checkout, and a module there (a base64.py at
+      # its root) must never be imported in place of the standard library's.
       - name: Unpack the report
         id: report
         env:
           REPLY: ${{ steps.send.outputs.reply }}
         run: |
-          python3 - "$REPLY" "$RUNNER_TEMP/paraglobe-report.html" >> "$GITHUB_OUTPUT" <<'PY'
+          python3 -I - "$REPLY" "$RUNNER_TEMP/paraglobe-report.html" >> "$GITHUB_OUTPUT" <<'PY'
           import base64, gzip, json, sys
           try:
               page = json.load(open(sys.argv[1])).get("report") or ""
