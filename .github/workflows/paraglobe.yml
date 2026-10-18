@@ -63,6 +63,13 @@ jobs:
             });
             fs.mkdirSync('.paraglobe', { recursive: true });
             fs.writeFileSync('.paraglobe/changed-files', files.map(f => f.filename).join('\n') + '\n');
+            // each path's status, and a renamed file's previous path, beside the paths alone
+            fs.writeFileSync('.paraglobe/changed-files.json', JSON.stringify({
+              version: 1,
+              files: files.map(f => (f.previous_filename
+                ? { path: f.filename, status: f.status, previous: f.previous_filename }
+                : { path: f.filename, status: f.status })),
+            }) + '\n');
             fs.writeFileSync('.paraglobe/head-sha', context.payload.pull_request.head.sha + '\n');
             core.info(`${files.length} changed path(s)`);
 
